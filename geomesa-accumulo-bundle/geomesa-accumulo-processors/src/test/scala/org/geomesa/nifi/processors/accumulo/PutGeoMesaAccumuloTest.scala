@@ -158,4 +158,34 @@ class PutGeoMesaAccumuloTest extends LazyLogging {
       ds.dispose()
     }
   }
+
+  @Test
+  def testAvroIngest(): Unit = {
+    val catalog = s"${root}AvroIngest"
+    val runner = TestRunners.newTestRunner(new AvroToPutGeoMesaAccumulo())
+    try {
+      dsParams.foreach { case (k, v) => runner.setProperty(k, v) }
+      runner.setProperty(AccumuloDataStoreParams.CatalogParam.key, catalog)
+      runner.setProperty(AbstractGeoIngestProcessor.Properties.SftNameKey, "example")
+      //runner.setProperty(ConverterIngestProcessor.ConverterNameKey, "example-csv")
+      runner.enqueue(getClass.getClassLoader.getResourceAsStream("example-csv.avro"))
+      runner.run()
+      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.SuccessRelationship, 1)
+      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.FailureRelationship, 0)
+    } finally {
+      runner.shutdown()
+    }
+
+    val ds = DataStoreFinder.getDataStore((dsParams + (AccumuloDataStoreParams.CatalogParam.key -> catalog)).asJava)
+    Assert.assertNotNull(ds)
+    try {
+      val sft = ds.getSchema("example")
+      Assert.assertNotNull(sft)
+      val features = SelfClosingIterator(ds.getFeatureSource("example").getFeatures.features()).toList
+      logger.debug(features.mkString(";"))
+      Assert.assertEquals(3, features.length)
+    } finally {
+      ds.dispose()
+    }
+  }
 }
