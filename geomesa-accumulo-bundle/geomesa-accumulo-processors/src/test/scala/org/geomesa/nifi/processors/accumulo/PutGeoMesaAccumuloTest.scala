@@ -167,11 +167,16 @@ class PutGeoMesaAccumuloTest extends LazyLogging {
       dsParams.foreach { case (k, v) => runner.setProperty(k, v) }
       runner.setProperty(AccumuloDataStoreParams.CatalogParam.key, catalog)
       runner.setProperty(AbstractGeoIngestProcessor.Properties.SftNameKey, "example")
-      //runner.setProperty(ConverterIngestProcessor.ConverterNameKey, "example-csv")
       runner.enqueue(getClass.getClassLoader.getResourceAsStream("example-csv.avro"))
+
       runner.run()
       runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.SuccessRelationship, 1)
       runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.FailureRelationship, 0)
+
+      runner.enqueue(getClass.getClassLoader.getResourceAsStream("bad-example-csv.avro"))
+      runner.run()
+      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.SuccessRelationship, 1)
+      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.FailureRelationship, 1)
     } finally {
       runner.shutdown()
     }
