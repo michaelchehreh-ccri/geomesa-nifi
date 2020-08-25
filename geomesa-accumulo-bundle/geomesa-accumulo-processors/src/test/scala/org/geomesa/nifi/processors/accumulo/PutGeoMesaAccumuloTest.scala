@@ -15,6 +15,7 @@ import org.geotools.data.DataStoreFinder
 import org.junit.{Assert, Test}
 import org.locationtech.geomesa.accumulo.MiniCluster
 import org.locationtech.geomesa.accumulo.data.AccumuloDataStoreParams
+import org.locationtech.geomesa.features.avro.AvroDataFileReader
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 
 class PutGeoMesaAccumuloTest extends LazyLogging {
@@ -195,6 +196,18 @@ class PutGeoMesaAccumuloTest extends LazyLogging {
   }
 
   @Test
+  def readFile(): Unit = {
+    val is = getClass.getClassLoader.getResourceAsStream("bad-example-csv.avro")
+    val reader = new AvroDataFileReader(is)
+    //assert(reader.hasNext, true)
+
+    reader.foreach { sf =>
+      println(s"SF: $sf")
+    }
+
+  }
+
+  @Test
   def testAvroIngestByName(): Unit = {
     val catalog = s"${root}AvroIngest"
     val runner = TestRunners.newTestRunner(new AvroToPutGeoMesaAccumulo())
@@ -211,8 +224,8 @@ class PutGeoMesaAccumuloTest extends LazyLogging {
 
       runner.enqueue(getClass.getClassLoader.getResourceAsStream("bad-example-csv.avro"))
       runner.run()
-      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.SuccessRelationship, 1)
-      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.FailureRelationship, 1)
+      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.SuccessRelationship, 2)
+      runner.assertTransferCount(AbstractGeoIngestProcessor.Relationships.FailureRelationship, 0)
     } finally {
       runner.shutdown()
     }
@@ -224,7 +237,8 @@ class PutGeoMesaAccumuloTest extends LazyLogging {
       Assert.assertNotNull(sft)
       val features = SelfClosingIterator(ds.getFeatureSource("example").getFeatures.features()).toList
       logger.debug(features.mkString(";"))
-      Assert.assertEquals(3, features.length)
+      println(features.mkString(";"))
+      Assert.assertEquals(6, features.length)
     } finally {
       ds.dispose()
     }
