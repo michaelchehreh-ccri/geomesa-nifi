@@ -133,7 +133,7 @@ class GetGeoMesaKafkaRecord extends AbstractProcessor {
       val sft = ds.getSchema(typeName)
       require(sft != null,
         s"Feature type '$typeName' does not exist in the store. Available types: ${ds.getTypeNames.mkString(", ")}")
-      converter = SimpleFeatureRecordConverter(sft, encoding)
+      converter = SimpleFeatureRecordConverter.fromSFT(sft, encoding)
       schema = factory.getSchema(Collections.emptyMap[String, String], converter.schema)
       fs = ds.getFeatureSource(typeName)
       fs.addFeatureListener(listener)

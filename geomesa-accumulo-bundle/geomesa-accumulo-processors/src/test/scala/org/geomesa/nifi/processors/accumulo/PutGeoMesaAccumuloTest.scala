@@ -209,7 +209,7 @@ class PutGeoMesaAccumuloTest extends LazyLogging {
 
   @Test
   def testAvroIngestByName(): Unit = {
-    val catalog = s"${root}AvroIngest"
+    val catalog = s"${root}AvroIngestByName"
     val runner = TestRunners.newTestRunner(new AvroToPutGeoMesaAccumulo())
     try {
       dsParams.foreach { case (k, v) => runner.setProperty(k, v) }

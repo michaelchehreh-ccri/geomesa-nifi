@@ -3,14 +3,14 @@ package org.geomesa.nifi.datastore.processor.records
 import java.io.OutputStream
 import java.util
 
-import org.apache.nifi.annotation.documentation.Tags
-import org.apache.nifi.components.{PropertyDescriptor, ValidationContext, ValidationResult}
-import org.apache.nifi.controller.{AbstractControllerService, ControllerServiceInitializationContext}
+import org.apache.nifi.annotation.documentation.{CapabilityDescription, Tags}
+import org.apache.nifi.controller.AbstractControllerService
 import org.apache.nifi.logging.ComponentLog
-import org.apache.nifi.serialization.record.{Record, RecordSchema, RecordSet}
-import org.apache.nifi.serialization.{RecordSetWriter, RecordSetWriterFactory, WriteResult}
-import org.apache.nifi.annotation.documentation.CapabilityDescription
-import org.apache.nifi.annotation.documentation.Tags
+import org.apache.nifi.schema.access.SchemaNameAsAttribute
+import org.apache.nifi.serialization.record.{Record, RecordSchema}
+import org.apache.nifi.serialization.{AbstractRecordSetWriter, RecordSetWriterFactory}
+import org.locationtech.geomesa.features.avro.AvroDataFileWriter
+import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 @Tags(Array("avro", "geoavro", "result", "set", "recordset", "record", "writer", "serializer", "row"))
 @CapabilityDescription("Writes the contents of a RecordSet as GeoAvro which AvroToPutGeoMesa* Processors can use.")
@@ -28,18 +28,31 @@ class GeoAvroRecordSetWriterFactory extends AbstractControllerService with Recor
   }
 }
 
-class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSchema, outputStream: OutputStream, map: util.Map[String, String]) extends RecordSetWriter {
-  override def write(recordSet: RecordSet): WriteResult = ???
+class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSchema, outputStream: OutputStream, map: util.Map[String, String]) extends AbstractRecordSetWriter(outputStream) {
+  private val schemaAccessWriter = new SchemaNameAsAttribute()
+  val converter: SimpleFeatureRecordConverter = SimpleFeatureRecordConverter.fromRecordSchema(recordSchema, GeometryEncoding.Wkb)
 
-  override def beginRecordSet(): Unit = ???
+  private val sft: SimpleFeatureType = converter.sft  // use recordSchema
+  val writer = new AvroDataFileWriter(outputStream, sft)
 
-  override def finishRecordSet(): WriteResult = ???
+  override def writeRecord(record: Record): util.Map[String, String] = {
+    //val sf: SimpleFeature = converter.convert(record)  // use Record
+    val sf = record match {
+      case sfmr: SimpleFeatureMapRecord => sfmr.sf
+      case other: Record => throw new Exception(s"Cannot converter records of type ${record.getClass} to a SimpleFeature")
+    }
+    writer.append(sf)
+    schemaAccessWriter.getAttributes(recordSchema)
+  }
 
-  override def write(record: Record): WriteResult = ???
+  override def getMimeType: String = "application/avro-binary"
 
-  override def getMimeType: String = ???
+  override def close(): Unit = {
+    writer.close()
+    // Calling super.close will close the stream.  Check if this necessary.
+    // super.close()
+  }
 
-  override def flush(): Unit = ???
-
-  override def close(): Unit = ???
+  // Creating the AvroDataFileWriter may handle this completely.
+  //override def onBeginRecordSet(): Unit = super.onBeginRecordSet()
 }

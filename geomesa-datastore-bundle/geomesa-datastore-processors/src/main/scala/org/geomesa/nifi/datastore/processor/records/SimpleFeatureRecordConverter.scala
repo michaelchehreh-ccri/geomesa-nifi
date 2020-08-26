@@ -8,16 +8,20 @@
 
 package org.geomesa.nifi.datastore.processor.records
 
-import java.util.{Date, UUID}
+import java.util
+import java.util.{Date, List, Map, UUID}
 
+import org.apache.avro.Schema
 import org.apache.nifi.serialization.SimpleRecordSchema
 import org.apache.nifi.serialization.record._
 import org.geomesa.nifi.datastore.processor.records.GeometryEncoding.GeometryEncoding
+import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.serialization.ObjectType
 import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
 import org.locationtech.geomesa.utils.text.{WKBUtils, WKTUtils}
 import org.locationtech.jts.geom.Geometry
+import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 /**
@@ -34,12 +38,51 @@ object SimpleFeatureRecordConverter {
 
   import scala.collection.JavaConverters._
 
-  def apply(sft: SimpleFeatureType, encoding: GeometryEncoding = GeometryEncoding.Wkt): SimpleFeatureRecordConverter = {
+  def fromSFT(sft: SimpleFeatureType, encoding: GeometryEncoding = GeometryEncoding.Wkt): SimpleFeatureRecordConverter = {
     val converters = sft.getAttributeDescriptors.asScala.map { descriptor =>
       getConverter(descriptor.getLocalName, ObjectType.selectType(descriptor), encoding)
-    }
-    new SimpleFeatureRecordConverterImpl(sft, converters.toArray)
+    }.toArray
+
+    val schema: RecordSchema = getRecordSchema(sft, converters)
+    new SimpleFeatureRecordConverterImpl(sft, schema, converters)
   }
+
+  def fromRecordSchema(schema: RecordSchema, encoding: GeometryEncoding = GeometryEncoding.Wkt): SimpleFeatureRecordConverter = {
+    val sft: SimpleFeatureType = recordSchemaToSFT(schema)
+    val converters = sft.getAttributeDescriptors.asScala.map { descriptor =>
+      getConverter(descriptor.getLocalName, ObjectType.selectType(descriptor), encoding)
+    }.toArray
+
+    new SimpleFeatureRecordConverterImpl(sft, schema, converters)
+  }
+
+  private def recordSchemaToSFT(schema: RecordSchema): SimpleFeatureType = {
+    schema match {
+      case sftSchema: SimpleFeatureTypeRecordSchema => sftSchema.sft
+      case _ => throw new Exception(s"Do not know how to create SFT from $schema")
+    }
+  }
+//
+//    val builder = new SimpleFeatureTypeBuilder
+//    schema.getFields.asScala.foreach { field =>
+//      val name = field.getFieldName
+//      field.getDataType match {
+//        case RecordFieldType.BOOLEAN.getDataType => builder.add(name, classOf[Boolean])
+//        case RecordFieldType.DATE.getDataType    => builder.add(name, classOf[Date])
+//        case RecordFieldType.DOUBLE.getDataType  => builder.add(name, classOf[java.lang.Double])
+//        case RecordFieldType.FLOAT.getDataType   => builder.add(name, classOf[java.lang.Float])
+//        case RecordFieldType.INT.getDataType     => builder.add(name, classOf[java.lang.Integer])
+//        case RecordFieldType.LONG.getDataType    => builder.add(name, classOf[java.lang.Long])
+//        case RecordFieldType.STRING.getDataType  => builder.add(name, classOf[java.lang.String])
+//        case unmatched: _ =>
+//          println(s"didn't know what to do with type $unmatched")
+////        case RecordFieldType.ARRAY.getArrayDataType =>
+////        case RecordFieldType.MAP.getMapDataType =>
+//      }
+//    }
+//
+//    builder.buildFeatureType()
+//  }
 
   private def getConverter(
       name: String,
@@ -67,17 +110,9 @@ object SimpleFeatureRecordConverter {
 
   class SimpleFeatureRecordConverterImpl(
       val sft: SimpleFeatureType,
+      val schema: RecordSchema,
       converters: Array[AttributeFieldConverter[AnyRef, AnyRef]]
     ) extends SimpleFeatureRecordConverter {
-
-    override val schema: RecordSchema = {
-      val fields = new java.util.ArrayList[RecordField](converters.length + 1)
-      fields.add(FidConverter.field)
-      converters.foreach(c => fields.add(c.field))
-      val schema = new SimpleRecordSchema(fields)
-      schema.setSchemaName(sft.getTypeName)
-      schema
-    }
 
     override def convert(feature: SimpleFeature): Record = {
       val values = new java.util.LinkedHashMap[String, AnyRef](converters.length + 1)
@@ -87,7 +122,7 @@ object SimpleFeatureRecordConverter {
         values.put(converters(i).field.getFieldName, converters(i).toRecord(feature.getAttribute(i)))
         i += 1
       }
-      new MapRecord(schema, values, false, false)
+      new SimpleFeatureMapRecord(feature, schema, values)
     }
 
     override def convert(feature: Record): SimpleFeature = {
@@ -100,6 +135,16 @@ object SimpleFeatureRecordConverter {
       }
       new ScalaSimpleFeature(sft, raw(0).asInstanceOf[String], values)
     }
+  }
+
+  private def getRecordSchema(sft: SimpleFeatureType, converters: Array[AttributeFieldConverter[AnyRef, AnyRef]]) = {
+     val fields = new util.ArrayList[RecordField](converters.length + 1)
+    fields.add(FidConverter.field)
+    converters.foreach(c => fields.add(c.field))
+    val schema = new SimpleFeatureTypeRecordSchema(sft, fields)
+    schema.setSchemaName(sft.getTypeName)
+    schema
+
   }
 
   trait AttributeFieldConverter[T <: AnyRef, U <: AnyRef] {
@@ -193,3 +238,8 @@ object SimpleFeatureRecordConverter {
 
   class BytesToRecordField(name: String) extends IdentityFieldConverter(name, bytesType)
 }
+
+class SimpleFeatureTypeRecordSchema(val sft: SimpleFeatureType, fields: util.List[RecordField])
+  extends SimpleRecordSchema(fields: util.List[RecordField])
+
+class SimpleFeatureMapRecord(val sf: SimpleFeature, schema: RecordSchema, values: util.Map[String, AnyRef]) extends MapRecord(schema, values, false, false)
