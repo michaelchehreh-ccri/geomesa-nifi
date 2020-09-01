@@ -38,11 +38,9 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
 
       val csvReader: CSVReader = new CSVReader
       runner.addControllerService("csv-reader", csvReader)
+      runner.setProperty(csvReader, CSVUtils.VALUE_SEPARATOR, "|")
       runner.enableControllerService(csvReader)
 
-//      val csvWriter: CSVRecordSetWriter = new CSVRecordSetWriter
-//      runner.addControllerService("csv-writer", csvWriter)
-//      runner.enableControllerService(csvWriter)
       val geoAvroWriter = new GeoAvroRecordSetWriterFactory()
       runner.addControllerService("geo-avro-record-set-writer", geoAvroWriter)
       runner.setProperty(geoAvroWriter, WKT_COLUMNS, "position")
@@ -51,23 +49,16 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
       runner.setProperty("record-reader", "csv-reader")
       runner.setProperty("record-writer", "geo-avro-record-set-writer")
 
-      val ffContent: String =
-        "id,username,role,position\n" +
-          "123,Legend,actor,POINT(-118.3287 34.0928)\n" +
-          "456,Lewis,leader,POINT(-86.9023 4.567)\n" +
-          "789,Basie,pianist,POINT(-73.9465 40.8116)\n"
+      val content: String =
+        "id|username|role|position\n" +
+          "123|Legend|actor|POINT(-118.3287 34.0928)\n" +
+          "456|Lewis|leader|POINT(-86.9023 4.567)\n" +
+          "789|Basie|pianist|POINT(-73.9465 40.8116)\n"
 
-      runner.enqueue(ffContent)
+      runner.enqueue(content)
       runner.run()
 
       runner.assertAllFlowFilesTransferred("success", 1)
-
-//      val flowFile: MockFlowFile = runner.getFlowFilesForRelationship("success").get(0)
-//      val expected = "id,username,role,position\n" +
-//        "123,Legend,actor,POINT(-118.3287 34.0928)\n" +
-//        "456,Lewis,leader,POINT(-86.9023 4.567)\n" +
-//        "789,Basie,pianist,POINT(-73.9465 40.8116)\n"
-//      assertEquals(expected, new String(flowFile.toByteArray))
 
       val result = runner.getContentAsByteArray(runner.getFlowFilesForRelationship("success").get(0))
 
@@ -75,7 +66,7 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
       val avroReader = new AvroDataFileReader(bais)
       val featuresRead: Seq[SimpleFeature] = avroReader.toList
 
-      featuresRead.foreach { println(_)}
+      featuresRead.foreach { println(_) }
       featuresRead.size mustEqual(3)
 
       ok

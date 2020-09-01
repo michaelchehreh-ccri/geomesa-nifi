@@ -78,7 +78,7 @@ object SimpleFeatureRecordConverter {
           }
         }
         // TODO: Add default geometry property
-        // builder.setDefaultGeometry()
+        //builder.setDefaultGeometry()
 
         // TODO: Add property to set FeatureTypeName
         builder.setName("test")
@@ -107,7 +107,8 @@ object SimpleFeatureRecordConverter {
   private def getConverter(
       name: String,
       bindings: Seq[ObjectType],
-      encoding: GeometryEncoding): AttributeFieldConverter[AnyRef, AnyRef] = {
+      encoding: GeometryEncoding,
+      map: util.Map[PropertyDescriptor, String] = new util.HashMap): AttributeFieldConverter[AnyRef, AnyRef] = {
     val converter = bindings.head match {
       case ObjectType.STRING   => new StringFieldConverter(name)
       case ObjectType.INT      => new IntFieldConverter(name)
@@ -117,9 +118,9 @@ object SimpleFeatureRecordConverter {
       case ObjectType.BOOLEAN  => new BooleanFieldConverter(name)
       case ObjectType.DATE     => new DateFieldConverter(name)
       case ObjectType.UUID     => new UuidFieldConverter(name)
-      case ObjectType.GEOMETRY => GeometryToRecordField(name, encoding)
-      case ObjectType.LIST     => new ListToRecordField(name, getConverter("", bindings.tail, encoding))
-      case ObjectType.MAP      => new MapToRecordField(name, getConverter("", bindings.drop(2), encoding))
+      case ObjectType.GEOMETRY => GeometryToRecordField(name, encoding, map)
+      case ObjectType.LIST     => new ListToRecordField(name, getConverter("", bindings.tail, encoding, map))
+      case ObjectType.MAP      => new MapToRecordField(name, getConverter("", bindings.drop(2), encoding, map))
       case ObjectType.BYTES    => new BytesToRecordField(name)
       case b => throw new NotImplementedError(s"Unexpected attribute type: $b")
     }
@@ -211,7 +212,10 @@ object SimpleFeatureRecordConverter {
   }
 
   object GeometryToRecordField {
-    def apply(name: String, encoding: GeometryEncoding): AttributeFieldConverter[Geometry, _] = {
+    def apply(name: String, encoding: GeometryEncoding, map: util.Map[PropertyDescriptor, String]): AttributeFieldConverter[Geometry, _] = {
+      // Look up encoding in PropertyDescriptors and then fall back.
+
+      // TODO: look up mapping
       encoding match {
         case GeometryEncoding.Wkt => new GeometryToWktRecordField(name)
         case GeometryEncoding.Wkb => new GeometryToWkbRecordField(name)
