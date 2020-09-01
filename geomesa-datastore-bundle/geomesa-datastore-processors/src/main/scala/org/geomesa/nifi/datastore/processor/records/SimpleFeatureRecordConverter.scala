@@ -106,7 +106,7 @@ object SimpleFeatureRecordConverter {
 
   }
 
-  val geometryTypeMap = scala.collection.Map(
+  private val geometryTypeMap = scala.collection.Map(
     "Geometry"           -> classOf[Geometry],
     "Point"              -> classOf[Point],
     "LineString"         -> classOf[LineString],
