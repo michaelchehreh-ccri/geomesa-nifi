@@ -150,10 +150,12 @@ object SimpleFeatureRecordConverter {
       val values = Array.ofDim[AnyRef](converters.length)
       var i = 0
       while (i < converters.length) {
-        values(i) = converters(i).toAttribute(raw(i + 1))
+        // Why is this raw(i+1)?
+        values(i) = converters(i).toAttribute(raw(i))
         i += 1
       }
-      new ScalaSimpleFeature(sft, raw(0).asInstanceOf[String], values)
+      // TODO:  New FID attribute
+      new ScalaSimpleFeature(sft, raw(0).toString, values)
     }
   }
 

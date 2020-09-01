@@ -52,7 +52,7 @@ object GeoAvroRecordSetWriterFactory {
 
 class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSchema, outputStream: OutputStream, map: util.Map[PropertyDescriptor, String]) extends AbstractRecordSetWriter(outputStream) {
   private val schemaAccessWriter = new SchemaNameAsAttribute()
-  val converter: SimpleFeatureRecordConverter = SimpleFeatureRecordConverter.fromRecordSchema(recordSchema, map, GeometryEncoding.Wkb)
+  val converter: SimpleFeatureRecordConverter = SimpleFeatureRecordConverter.fromRecordSchema(recordSchema, map, GeometryEncoding.Wkt)
 
   private val sft: SimpleFeatureType = converter.sft  // use recordSchema
   val writer = new AvroDataFileWriter(outputStream, sft)
@@ -61,7 +61,8 @@ class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSch
     //val sf: SimpleFeature = converter.convert(record)  // use Record
     val sf = record match {
       case sfmr: SimpleFeatureMapRecord => sfmr.sf
-      case other: Record => throw new Exception(s"Cannot converter records of type ${record.getClass} to a SimpleFeature")
+      case other: Record => converter.convert(record)
+        // throw new Exception(s"Cannot converter records of type ${record.getClass} to a SimpleFeature")
     }
     writer.append(sf)
     schemaAccessWriter.getAttributes(recordSchema)
