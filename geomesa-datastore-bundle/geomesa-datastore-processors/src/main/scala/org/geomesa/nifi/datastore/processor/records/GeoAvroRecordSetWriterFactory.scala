@@ -12,7 +12,9 @@ import org.apache.nifi.processor.util.StandardValidators
 import org.apache.nifi.schema.access.SchemaNameAsAttribute
 import org.apache.nifi.serialization.record.{Record, RecordSchema}
 import org.apache.nifi.serialization.{AbstractRecordSetWriter, RecordSetWriterFactory}
-import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.WKT_COLUMNS
+import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.{GEOMETRY_COLUMNS, TYPE_NAME}
+import org.geomesa.nifi.datastore.processor.records.GeometryEncoding.GeometryEncoding
+import org.geomesa.nifi.datastore.processor.records.SimpleFeatureRecordConverter.TypeAndEncoding
 import org.locationtech.geomesa.features.avro.AvroDataFileWriter
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
@@ -37,14 +39,24 @@ class GeoAvroRecordSetWriterFactory extends AbstractControllerService with Recor
 //    val list = super.getSupportedPropertyDescriptors
 //    list.add(WKT_COLUMNS)
     import scala.collection.JavaConverters._
-    Seq(WKT_COLUMNS).asJava
+    Seq(GEOMETRY_COLUMNS).asJava
   }
 }
 
 object GeoAvroRecordSetWriterFactory {
-  val WKT_COLUMNS = new PropertyDescriptor.Builder()
-    .name("WKT Columns")
-    .description("Comma-separated list of columns with geometries in WKT format")
+  val GEOMETRY_COLUMNS = new PropertyDescriptor.Builder()
+    .name("Geometry Columns")
+    .description("Comma-separated list of columns with geometries with type " +
+      "(and optionally the format, (Wkt, Wkb)).  " +
+      "Example: position:Point,line:LineString.  " +
+      "Note the first field is used as a the default geometry.")
+    .expressionLanguageSupported(ExpressionLanguageScope.NONE)
+    .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+    .required(false).build
+
+  val TYPE_NAME = new PropertyDescriptor.Builder()
+    .name("SimpleFeature TypeName")
+    .description("The type name for the output.")
     .expressionLanguageSupported(ExpressionLanguageScope.NONE)
     .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
     .required(false).build
@@ -52,7 +64,13 @@ object GeoAvroRecordSetWriterFactory {
 
 class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSchema, outputStream: OutputStream, map: util.Map[PropertyDescriptor, String]) extends AbstractRecordSetWriter(outputStream) {
   private val schemaAccessWriter = new SchemaNameAsAttribute()
-  val converter: SimpleFeatureRecordConverter = SimpleFeatureRecordConverter.fromRecordSchema(recordSchema, map, GeometryEncoding.Wkt)
+  // Wkt is assumed to be the default GeometryEncoding.
+  // TODO:  Extract this as a property?
+  private val encodings = getEncodings(map, GeometryEncoding.Wkt)
+  private val defaultGeometryColumn: Option[String] = Option(map.get(GEOMETRY_COLUMNS)).map(_.split(":")(0))
+  val typeName: Option[String] = Option(map.get(TYPE_NAME))
+  val converter: SimpleFeatureRecordConverter =
+    SimpleFeatureRecordConverter.fromRecordSchema(recordSchema, encodings, GeometryEncoding.Wkt, defaultGeometryColumn, typeName)
 
   private val sft: SimpleFeatureType = converter.sft  // use recordSchema
   val writer = new AvroDataFileWriter(outputStream, sft)
@@ -66,6 +84,27 @@ class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSch
     }
     writer.append(sf)
     schemaAccessWriter.getAttributes(recordSchema)
+  }
+
+  private def getEncodings(descriptorToString: util.Map[PropertyDescriptor, String], defaultEncoding: GeometryEncoding): Map[String, TypeAndEncoding] = {
+    val geometryColumns = descriptorToString.get(GEOMETRY_COLUMNS)
+    if (geometryColumns == null) {
+      Map()
+    } else {
+      geometryColumns
+        .split(",")
+        .map { s =>
+          // TODO: Make this exception better!
+          val splits = s.split(":")
+          if (splits.size < 2) throw new Exception(s"Improper configuration string: ${map.get(GEOMETRY_COLUMNS)}")
+          val encoding = if (splits.size == 2) {
+            defaultEncoding
+          } else {
+            GeometryEncoding(splits(2))
+          }
+          (splits(0), TypeAndEncoding(splits(1), encoding))
+        }.toMap
+    }
   }
 
   override def getMimeType: String = "application/avro-binary"

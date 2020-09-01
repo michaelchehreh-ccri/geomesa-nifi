@@ -13,5 +13,11 @@ package object records {
   object GeometryEncoding extends Enumeration {
     type GeometryEncoding = Value
     val Wkt, Wkb = Value
+    def apply(encodingString: String): GeometryEncoding = {
+      encodingString match {
+        case "Wkb" => GeometryEncoding.Wkb
+        case "Wkt" => GeometryEncoding.Wkt
+      }
+    }
   }
 }

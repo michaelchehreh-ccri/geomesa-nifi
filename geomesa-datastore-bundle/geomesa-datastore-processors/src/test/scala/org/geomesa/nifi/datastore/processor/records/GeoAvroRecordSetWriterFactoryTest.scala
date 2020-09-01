@@ -6,25 +6,20 @@
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.geomesa.nifi.processors.records
+package org.geomesa.nifi.datastore.processor.records
 
 import java.io.ByteArrayInputStream
-import java.nio.charset.StandardCharsets
-import java.util
-import java.util.{HashMap, Map}
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.nifi.csv.{CSVReader, CSVRecordSetWriter, CSVUtils}
-import org.apache.nifi.processors.standard.{ConvertRecord, ValidateRecord}
-import org.apache.nifi.util.{MockFlowFile, TestRunner, TestRunners}
-import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory
-import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.WKT_COLUMNS
-import org.junit.Assert.assertEquals
+import org.apache.nifi.csv.{CSVReader, CSVUtils}
+import org.apache.nifi.processors.standard.ConvertRecord
+import org.apache.nifi.util.{TestRunner, TestRunners}
+import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.{GEOMETRY_COLUMNS, TYPE_NAME}
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.avro.AvroDataFileReader
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.jts.geom.{Geometry, MultiPolygon}
 import org.opengis.feature.simple.SimpleFeature
+import org.specs2.matcher.Matchers.anInstanceOf
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -40,19 +35,57 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
           "456|Lewis|leader|POINT(-86.9023 4.567)\n" +
           "789|Basie|pianist|POINT(-73.9465 40.8116)\n"
 
-      val geometryColumns = "position"
+      val geometryColumns = "position:Point"
 
-      val featuresRead: Seq[SimpleFeature] = configureAndRun(content, geometryColumns)
+      val featuresRead: Seq[SimpleFeature] = configureAndRun(content, geometryColumns, "test")
 
       featuresRead.foreach { println(_) }
-      featuresRead.size mustEqual(3)
+      featuresRead.size mustEqual 3
 
+      ok
+    }
+
+    "Write out all geometry types and handle default geometries" in {
+      val geometries = s"MULTILINESTRING((0 0, 10 10))|" +
+      "POINT(0 0)|" + "LINESTRING(0 0, 1 1, 4 4)|" +
+      "POLYGON((10 10, 10 20, 20 20, 20 10, 10 10), (11 11, 19 11, 19 19, 11 19, 11 11))|" +
+      "MULTIPOINT((0 0), (1 1))|" +
+      "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))|" +
+      "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 0)), ((10 10, 10 20, 20 20, 20 10, 10 10), (11 11, 19 11, 19 19, 11 19, 11 11)))"
+
+      val content: String =
+        "id|username|role|position|defaultmls|p|ls|poly|mp|mls|mpoly\n" +
+          s"123|Legend|actor|POINT(-118.3287 34.0928)|$geometries\n" +
+          s"456|Lewis|leader|POINT(-86.9023 4.567)|$geometries\n" +
+          s"789|Basie|pianist|POINT(-73.9465 40.8116)|$geometries\n"
+
+      val geometryColumns = "defaultmls:MultiLineString,position:Point,p:Point,ls:LineString,poly:Polygon,mp:MultiPoint,mls:MultiLineString,mpoly:MultiPolygon"
+      val typeName = "testTypeName"
+
+      val featuresRead: Seq[SimpleFeature] = configureAndRun(content, geometryColumns, typeName)
+
+      featuresRead.foreach { println(_) }
+      featuresRead.size mustEqual 3
+
+      val feature = featuresRead.head
+      (3 until 11).foreach { i =>
+        println(s"Working on $i")
+        feature.getAttribute(i) must anInstanceOf[Geometry]
+      }
+
+      val sft = feature.getFeatureType
+      sft.getGeometryDescriptor.getName.getLocalPart mustEqual "defaultmls"
+
+      sft.getTypeName mustEqual "testTypeName"
+
+      // Spot check for a given type/field
+      sft.getDescriptor("mpoly").getType.getBinding mustEqual classOf[MultiPolygon]
       ok
     }
   }
 
-  private def configureAndRun(content: String, geomtryColumns: String) = {
-    val runner: TestRunner = buildRunner(geomtryColumns)
+  private def configureAndRun(content: String, geometryColumns: String, typeName: String) = {
+    val runner: TestRunner = buildRunner(geometryColumns, typeName)
     enqueueAndRun(runner, content)
 
     val featuresRead: Seq[SimpleFeature] = getFeatures(runner)
@@ -75,7 +108,7 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
     featuresRead
   }
 
-  private def buildRunner(geomtryColumns: String) = {
+  private def buildRunner(geometryColumns: String, typeName: String) = {
     val runner: TestRunner = TestRunners.newTestRunner(classOf[ConvertRecord])
 
     val csvReader: CSVReader = new CSVReader
@@ -85,7 +118,8 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
 
     val geoAvroWriter = new GeoAvroRecordSetWriterFactory()
     runner.addControllerService("geo-avro-record-set-writer", geoAvroWriter)
-    runner.setProperty(geoAvroWriter, WKT_COLUMNS, geomtryColumns)
+    runner.setProperty(geoAvroWriter, GEOMETRY_COLUMNS, geometryColumns)
+    runner.setProperty(geoAvroWriter, TYPE_NAME, typeName)
     runner.enableControllerService(geoAvroWriter)
 
     runner.setProperty("record-reader", "csv-reader")

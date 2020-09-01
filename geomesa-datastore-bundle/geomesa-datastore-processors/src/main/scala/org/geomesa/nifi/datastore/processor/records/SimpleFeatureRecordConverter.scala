@@ -15,14 +15,14 @@ import org.apache.avro.Schema
 import org.apache.nifi.components.PropertyDescriptor
 import org.apache.nifi.serialization.SimpleRecordSchema
 import org.apache.nifi.serialization.record._
-import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.WKT_COLUMNS
+import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.GEOMETRY_COLUMNS
 import org.geomesa.nifi.datastore.processor.records.GeometryEncoding.GeometryEncoding
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.serialization.ObjectType
 import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
 import org.locationtech.geomesa.utils.text.{WKBUtils, WKTUtils}
-import org.locationtech.jts.geom.{Geometry, Point}
+import org.locationtech.jts.geom.{Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon}
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
@@ -49,43 +49,73 @@ object SimpleFeatureRecordConverter {
     new SimpleFeatureRecordConverterImpl(sft, schema, converters)
   }
 
-  def fromRecordSchema(schema: RecordSchema, map: util.Map[PropertyDescriptor, String], encoding: GeometryEncoding = GeometryEncoding.Wkt): SimpleFeatureRecordConverter = {
-    val sft: SimpleFeatureType = recordSchemaToSFT(schema, map)
+  def fromRecordSchema(schema: RecordSchema,
+                       encodings: scala.collection.Map[String, TypeAndEncoding],
+                       encoding: GeometryEncoding = GeometryEncoding.Wkt,
+                       defaultGeometryColumn: Option[String] = None,
+                       typeName: Option[String] = None): SimpleFeatureRecordConverter = {
+    val sft: SimpleFeatureType = recordSchemaToSFT(schema, encodings, defaultGeometryColumn, typeName)
     val converters = sft.getAttributeDescriptors.asScala.map { descriptor =>
-      getConverter(descriptor.getLocalName, ObjectType.selectType(descriptor), encoding)
+      getConverter(descriptor.getLocalName, ObjectType.selectType(descriptor), encoding, encodings)
     }.toArray
 
     new SimpleFeatureRecordConverterImpl(sft, schema, converters)
   }
 
-  private def recordSchemaToSFT(schema: RecordSchema, map: util.Map[PropertyDescriptor, String]): SimpleFeatureType = {
+  private def recordSchemaToSFT(schema: RecordSchema,
+                                encodings: scala.collection.Map[String, TypeAndEncoding],
+                                defaultGeometryColumn: Option[String] = None,
+                                typeName: Option[String] = None): SimpleFeatureType = {
     schema match {
       case sftSchema: SimpleFeatureTypeRecordSchema => sftSchema.sft
       case _ => 
         // If we do not have enough information, throw an exception
-        if (map.isEmpty) {
+        if (encodings.isEmpty) {
           throw new Exception(s"Do not know how to create SFT from $schema.  Set properties!")
         }
-        val wktColumns: Array[String] = map.get(WKT_COLUMNS).split(",")
+//        val geometryColumns: scala.collection.Map[String, String] = map.get(GEOMETRY_COLUMNS)
+//          .split(",")
+//          .map { s =>
+//            // TODO: Make this exception better!
+//            val splits = s.split(":")
+//            if (splits.size < 2) throw new Exception(s"Improper configuration string: ${map.get(GEOMETRY_COLUMNS)}")
+//            (splits(0), splits(1))
+//          }.toMap
         val builder = new SimpleFeatureTypeBuilder
+
         schema.getFields.asScala.foreach { field =>
           val name = field.getFieldName
-          if (wktColumns.contains(name)) {
-            builder.add(name, classOf[Point])
-          } else {
-            val clazz = dataTypeToClass(field.getDataType)
-            builder.add(name, clazz)
+
+          encodings.get(name) match {
+              case Some(geometryType) =>
+              println(s"Geometry type for name: $name is $geometryType")
+              builder.add(name, geometryType.clazz)
+            case None => // Not a geometry column
+              val clazz = dataTypeToClass(field.getDataType)
+              builder.add(name, clazz)
           }
         }
-        // TODO: Add default geometry property
-        //builder.setDefaultGeometry()
+        // The default geometry is set as the first column name.
+        defaultGeometryColumn.foreach(builder.setDefaultGeometry)
+        typeName.foreach(builder.setName)
 
-        // TODO: Add property to set FeatureTypeName
-        builder.setName("test")
-
-        builder.buildFeatureType()
+        val ret = builder.buildFeatureType()
+        println(s"SFT: $ret with default geometry: ${ret.getGeometryDescriptor}")
+        ret
     }
+
   }
+
+  val geometryTypeMap = scala.collection.Map(
+    "Geometry"           -> classOf[Geometry],
+    "Point"              -> classOf[Point],
+    "LineString"         -> classOf[LineString],
+    "Polygon"            -> classOf[Polygon],
+    "MultiPoint"         -> classOf[MultiPoint],
+    "MultiLineString"    -> classOf[MultiLineString],
+    "MultiPolygon"       -> classOf[MultiPolygon],
+    "GeometryCollection" -> classOf[GeometryCollection]
+  )
   
   private def dataTypeToClass(dataType: DataType): Class[_] = {
     dataType.getFieldType match {
@@ -108,7 +138,7 @@ object SimpleFeatureRecordConverter {
       name: String,
       bindings: Seq[ObjectType],
       encoding: GeometryEncoding,
-      map: util.Map[PropertyDescriptor, String] = new util.HashMap): AttributeFieldConverter[AnyRef, AnyRef] = {
+      encodings: scala.collection.Map[String, TypeAndEncoding] = new util.HashMap[String, TypeAndEncoding].asScala): AttributeFieldConverter[AnyRef, AnyRef] = {
     val converter = bindings.head match {
       case ObjectType.STRING   => new StringFieldConverter(name)
       case ObjectType.INT      => new IntFieldConverter(name)
@@ -118,9 +148,9 @@ object SimpleFeatureRecordConverter {
       case ObjectType.BOOLEAN  => new BooleanFieldConverter(name)
       case ObjectType.DATE     => new DateFieldConverter(name)
       case ObjectType.UUID     => new UuidFieldConverter(name)
-      case ObjectType.GEOMETRY => GeometryToRecordField(name, encoding, map)
-      case ObjectType.LIST     => new ListToRecordField(name, getConverter("", bindings.tail, encoding, map))
-      case ObjectType.MAP      => new MapToRecordField(name, getConverter("", bindings.drop(2), encoding, map))
+      case ObjectType.GEOMETRY => GeometryToRecordField(name, encoding, encodings)
+      case ObjectType.LIST     => new ListToRecordField(name, getConverter("", bindings.tail, encoding, encodings))
+      case ObjectType.MAP      => new MapToRecordField(name, getConverter("", bindings.drop(2), encoding, encodings))
       case ObjectType.BYTES    => new BytesToRecordField(name)
       case b => throw new NotImplementedError(s"Unexpected attribute type: $b")
     }
@@ -212,15 +242,21 @@ object SimpleFeatureRecordConverter {
   }
 
   object GeometryToRecordField {
-    def apply(name: String, encoding: GeometryEncoding, map: util.Map[PropertyDescriptor, String]): AttributeFieldConverter[Geometry, _] = {
-      // Look up encoding in PropertyDescriptors and then fall back.
-
-      // TODO: look up mapping
-      encoding match {
+    def apply(name: String, encoding: GeometryEncoding, encodings: scala.collection.Map[String, TypeAndEncoding]): AttributeFieldConverter[Geometry, _] = {
+      // Look up encoding in PropertyDescriptors and then fall back to the encoding passed in.
+      encodings.get(name).map(_.encoding).getOrElse(encoding) match {
         case GeometryEncoding.Wkt => new GeometryToWktRecordField(name)
         case GeometryEncoding.Wkb => new GeometryToWkbRecordField(name)
         case _ => throw new NotImplementedError(s"Geometry encoding $encoding")
       }
+    }
+  }
+
+  case class TypeAndEncoding(clazz: Class[_], encoding: GeometryEncoding)
+
+  object TypeAndEncoding {
+    def apply(clazzString: String, encoding: GeometryEncoding): TypeAndEncoding = {
+      TypeAndEncoding(geometryTypeMap(clazzString), encoding)
     }
   }
 
