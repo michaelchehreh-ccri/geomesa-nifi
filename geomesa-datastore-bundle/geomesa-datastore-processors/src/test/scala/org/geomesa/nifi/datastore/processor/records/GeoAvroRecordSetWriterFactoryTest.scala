@@ -8,6 +8,7 @@
 
 package org.geomesa.nifi.processors.records
 
+import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
 import java.util
 import java.util.{HashMap, Map}
@@ -16,10 +17,13 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.nifi.csv.{CSVReader, CSVRecordSetWriter, CSVUtils}
 import org.apache.nifi.processors.standard.{ConvertRecord, ValidateRecord}
 import org.apache.nifi.util.{MockFlowFile, TestRunner, TestRunners}
+import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory
 import org.junit.Assert.assertEquals
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.features.avro.AvroDataFileReader
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -35,12 +39,15 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
       runner.addControllerService("csv-reader", csvReader)
       runner.enableControllerService(csvReader)
 
-      val csvWriter: CSVRecordSetWriter = new CSVRecordSetWriter
-      runner.addControllerService("csv-writer", csvWriter)
-      runner.enableControllerService(csvWriter)
+//      val csvWriter: CSVRecordSetWriter = new CSVRecordSetWriter
+//      runner.addControllerService("csv-writer", csvWriter)
+//      runner.enableControllerService(csvWriter)
+      val geoAvroWriter = new GeoAvroRecordSetWriterFactory()
+      runner.addControllerService("geo-avro-record-set-writer", geoAvroWriter)
+      runner.enableControllerService(geoAvroWriter)
 
       runner.setProperty("record-reader", "csv-reader")
-      runner.setProperty("record-writer", "csv-writer")
+      runner.setProperty("record-writer", "geo-avro-record-set-writer")
 
       val ffContent: String =
         "id,username,role,position\n" +
@@ -53,13 +60,22 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
 
       runner.assertAllFlowFilesTransferred("success", 1)
 
-      val flowFile: MockFlowFile = runner.getFlowFilesForRelationship("success").get(0)
-      //val expected = "id|username|password\n123|'John'|password\n"
-      val expected = "id,username,role,position\n" +
-        "123,Legend,actor,POINT(-118.3287 34.0928)\n" +
-        "456,Lewis,leader,POINT(-86.9023 4.567)\n" +
-        "789,Basie,pianist,POINT(-73.9465 40.8116)\n"
-      assertEquals(expected, new String(flowFile.toByteArray))
+//      val flowFile: MockFlowFile = runner.getFlowFilesForRelationship("success").get(0)
+//      val expected = "id,username,role,position\n" +
+//        "123,Legend,actor,POINT(-118.3287 34.0928)\n" +
+//        "456,Lewis,leader,POINT(-86.9023 4.567)\n" +
+//        "789,Basie,pianist,POINT(-73.9465 40.8116)\n"
+//      assertEquals(expected, new String(flowFile.toByteArray))
+
+      val result = runner.getContentAsByteArray(runner.getFlowFilesForRelationship("success").get(0))
+
+      val bais = new ByteArrayInputStream(result)
+      val avroReader = new AvroDataFileReader(bais)
+      val featuresRead: Seq[SimpleFeature] = avroReader.toList
+
+      featuresRead.foreach { println(_)}
+      featuresRead.size mustEqual(3)
+
       ok
     }
   }
