@@ -34,17 +34,15 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
 
   "GeoAvroRecordSetWriterFactory" should {
     "Write out GeoAvro from a simple Record producing Processor" in {
-      val runner: TestRunner = buildRunner("position")
-
       val content: String =
         "id|username|role|position\n" +
           "123|Legend|actor|POINT(-118.3287 34.0928)\n" +
           "456|Lewis|leader|POINT(-86.9023 4.567)\n" +
           "789|Basie|pianist|POINT(-73.9465 40.8116)\n"
 
-      enqueueAndRun(runner, content)
+      val geometryColumns = "position"
 
-      val featuresRead: Seq[SimpleFeature] = getFeatures(runner)
+      val featuresRead: Seq[SimpleFeature] = configureAndRun(content, geometryColumns)
 
       featuresRead.foreach { println(_) }
       featuresRead.size mustEqual(3)
@@ -53,7 +51,15 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
     }
   }
 
-  private def enqueueAndRun(runner: TestRunner, content: String) = {
+  private def configureAndRun(content: String, geomtryColumns: String) = {
+    val runner: TestRunner = buildRunner(geomtryColumns)
+    enqueueAndRun(runner, content)
+
+    val featuresRead: Seq[SimpleFeature] = getFeatures(runner)
+    featuresRead
+  }
+
+  private def enqueueAndRun(runner: TestRunner, content: String): Unit = {
     runner.enqueue(content)
     runner.run()
 
