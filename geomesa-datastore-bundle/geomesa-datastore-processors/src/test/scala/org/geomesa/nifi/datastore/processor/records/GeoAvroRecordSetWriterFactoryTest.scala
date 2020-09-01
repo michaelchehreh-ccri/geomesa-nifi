@@ -33,40 +33,32 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
 
       val csvReader: CSVReader = new CSVReader
       runner.addControllerService("csv-reader", csvReader)
-      runner.setProperty(csvReader, CSVUtils.VALUE_SEPARATOR, "${csv.in.delimiter}")
-      runner.setProperty(csvReader, CSVUtils.QUOTE_CHAR, "${csv.in.quote}")
-      runner.setProperty(csvReader, CSVUtils.ESCAPE_CHAR, "${csv.in.escape}")
-      runner.setProperty(csvReader, CSVUtils.COMMENT_MARKER, "${csv.in.comment}")
       runner.enableControllerService(csvReader)
 
       val csvWriter: CSVRecordSetWriter = new CSVRecordSetWriter
       runner.addControllerService("csv-writer", csvWriter)
-      runner.setProperty(csvWriter, CSVUtils.VALUE_SEPARATOR, "${csv.out.delimiter}")
-      runner.setProperty(csvWriter, CSVUtils.QUOTE_CHAR, "${csv.out.quote}")
-      runner.setProperty(csvWriter, CSVUtils.QUOTE_MODE, CSVUtils.QUOTE_ALL)
       runner.enableControllerService(csvWriter)
 
       runner.setProperty("record-reader", "csv-reader")
       runner.setProperty("record-writer", "csv-writer")
 
-      val ffContent: String = "~ comment\n" + "id|username|password\n" + "123|'John'|^|^'^^\n"
+      val ffContent: String =
+        "id,username,role,position\n" +
+          "123,Legend,actor,POINT(-118.3287 34.0928)\n" +
+          "456,Lewis,leader,POINT(-86.9023 4.567)\n" +
+          "789,Basie,pianist,POINT(-73.9465 40.8116)\n"
 
-      val ffAttributes: util.Map[String, String] = new util.HashMap[String, String]
-      ffAttributes.put("csv.in.delimiter", "|")
-      ffAttributes.put("csv.in.quote", "'")
-      ffAttributes.put("csv.in.escape", "^")
-      ffAttributes.put("csv.in.comment", "~")
-      ffAttributes.put("csv.out.delimiter", "\t")
-      ffAttributes.put("csv.out.quote", "`")
-
-      runner.enqueue(ffContent, ffAttributes)
+      runner.enqueue(ffContent)
       runner.run()
 
       runner.assertAllFlowFilesTransferred("success", 1)
 
       val flowFile: MockFlowFile = runner.getFlowFilesForRelationship("success").get(0)
-
-      val expected: String = "`id`\t`username`\t`password`\n" + "`123`\t`John`\t`|'^`\n"
+      //val expected = "id|username|password\n123|'John'|password\n"
+      val expected = "id,username,role,position\n" +
+        "123,Legend,actor,POINT(-118.3287 34.0928)\n" +
+        "456,Lewis,leader,POINT(-86.9023 4.567)\n" +
+        "789,Basie,pianist,POINT(-73.9465 40.8116)\n"
       assertEquals(expected, new String(flowFile.toByteArray))
       ok
     }
