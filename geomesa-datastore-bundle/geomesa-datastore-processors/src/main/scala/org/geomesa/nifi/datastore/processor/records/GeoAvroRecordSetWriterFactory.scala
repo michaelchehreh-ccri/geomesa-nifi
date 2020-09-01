@@ -4,11 +4,15 @@ import java.io.OutputStream
 import java.util
 
 import org.apache.nifi.annotation.documentation.{CapabilityDescription, Tags}
+import org.apache.nifi.components.PropertyDescriptor
 import org.apache.nifi.controller.AbstractControllerService
+import org.apache.nifi.expression.ExpressionLanguageScope
 import org.apache.nifi.logging.ComponentLog
+import org.apache.nifi.processor.util.StandardValidators
 import org.apache.nifi.schema.access.SchemaNameAsAttribute
 import org.apache.nifi.serialization.record.{Record, RecordSchema}
 import org.apache.nifi.serialization.{AbstractRecordSetWriter, RecordSetWriterFactory}
+import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.WKT_COLUMNS
 import org.locationtech.geomesa.features.avro.AvroDataFileWriter
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
@@ -24,13 +28,31 @@ class GeoAvroRecordSetWriterFactory extends AbstractControllerService with Recor
   override def createWriter(componentLog: ComponentLog, recordSchema: RecordSchema, outputStream: OutputStream, map: util.Map[String, String]): GeoAvroRecordSetWriter = {
     println(s"Creating writer for schema $recordSchema with map $map")
     componentLog.info("Starting to write Avro output!")
-    new GeoAvroRecordSetWriter(componentLog, recordSchema, outputStream, map)
+    new GeoAvroRecordSetWriter(componentLog, recordSchema, outputStream, getConfigurationContext.getProperties)
+  }
+
+  // TODO: Refactor
+  // TODO: Add WKB_COLUMNS
+  override def getSupportedPropertyDescriptors: util.List[PropertyDescriptor] = {
+//    val list = super.getSupportedPropertyDescriptors
+//    list.add(WKT_COLUMNS)
+    import scala.collection.JavaConverters._
+    Seq(WKT_COLUMNS).asJava
   }
 }
 
-class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSchema, outputStream: OutputStream, map: util.Map[String, String]) extends AbstractRecordSetWriter(outputStream) {
+object GeoAvroRecordSetWriterFactory {
+  val WKT_COLUMNS = new PropertyDescriptor.Builder()
+    .name("WKT Columns")
+    .description("Comma-separated list of columns with geometries in WKT format")
+    .expressionLanguageSupported(ExpressionLanguageScope.NONE)
+    .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+    .required(false).build
+}
+
+class GeoAvroRecordSetWriter(componentLog: ComponentLog, recordSchema: RecordSchema, outputStream: OutputStream, map: util.Map[PropertyDescriptor, String]) extends AbstractRecordSetWriter(outputStream) {
   private val schemaAccessWriter = new SchemaNameAsAttribute()
-  val converter: SimpleFeatureRecordConverter = SimpleFeatureRecordConverter.fromRecordSchema(recordSchema, GeometryEncoding.Wkb)
+  val converter: SimpleFeatureRecordConverter = SimpleFeatureRecordConverter.fromRecordSchema(recordSchema, map, GeometryEncoding.Wkb)
 
   private val sft: SimpleFeatureType = converter.sft  // use recordSchema
   val writer = new AvroDataFileWriter(outputStream, sft)

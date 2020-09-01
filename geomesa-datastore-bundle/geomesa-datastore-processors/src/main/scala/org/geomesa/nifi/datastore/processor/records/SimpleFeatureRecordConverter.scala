@@ -12,15 +12,17 @@ import java.util
 import java.util.{Date, List, Map, UUID}
 
 import org.apache.avro.Schema
+import org.apache.nifi.components.PropertyDescriptor
 import org.apache.nifi.serialization.SimpleRecordSchema
 import org.apache.nifi.serialization.record._
+import org.geomesa.nifi.datastore.processor.records.GeoAvroRecordSetWriterFactory.WKT_COLUMNS
 import org.geomesa.nifi.datastore.processor.records.GeometryEncoding.GeometryEncoding
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.serialization.ObjectType
 import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
 import org.locationtech.geomesa.utils.text.{WKBUtils, WKTUtils}
-import org.locationtech.jts.geom.Geometry
+import org.locationtech.jts.geom.{Geometry, Point}
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
@@ -47,8 +49,8 @@ object SimpleFeatureRecordConverter {
     new SimpleFeatureRecordConverterImpl(sft, schema, converters)
   }
 
-  def fromRecordSchema(schema: RecordSchema, encoding: GeometryEncoding = GeometryEncoding.Wkt): SimpleFeatureRecordConverter = {
-    val sft: SimpleFeatureType = recordSchemaToSFT(schema)
+  def fromRecordSchema(schema: RecordSchema, map: util.Map[PropertyDescriptor, String], encoding: GeometryEncoding = GeometryEncoding.Wkt): SimpleFeatureRecordConverter = {
+    val sft: SimpleFeatureType = recordSchemaToSFT(schema, map)
     val converters = sft.getAttributeDescriptors.asScala.map { descriptor =>
       getConverter(descriptor.getLocalName, ObjectType.selectType(descriptor), encoding)
     }.toArray
@@ -56,33 +58,51 @@ object SimpleFeatureRecordConverter {
     new SimpleFeatureRecordConverterImpl(sft, schema, converters)
   }
 
-  private def recordSchemaToSFT(schema: RecordSchema): SimpleFeatureType = {
+  private def recordSchemaToSFT(schema: RecordSchema, map: util.Map[PropertyDescriptor, String]): SimpleFeatureType = {
     schema match {
       case sftSchema: SimpleFeatureTypeRecordSchema => sftSchema.sft
-      case _ => throw new Exception(s"Do not know how to create SFT from $schema")
+      case _ => 
+        // If we do not have enough information, throw an exception
+        if (map.isEmpty) {
+          throw new Exception(s"Do not know how to create SFT from $schema.  Set properties!")
+        }
+        val wktColumns: Array[String] = map.get(WKT_COLUMNS).split(",")
+        val builder = new SimpleFeatureTypeBuilder
+        schema.getFields.asScala.foreach { field =>
+          val name = field.getFieldName
+          if (wktColumns.contains(name)) {
+            builder.add(name, classOf[Point])
+          } else {
+            val clazz = dataTypeToClass(field.getDataType)
+            builder.add(name, clazz)
+          }
+        }
+        // TODO: Add default geometry property
+        // builder.setDefaultGeometry()
+
+        // TODO: Add property to set FeatureTypeName
+        builder.setName("test")
+
+        builder.buildFeatureType()
     }
   }
-//
-//    val builder = new SimpleFeatureTypeBuilder
-//    schema.getFields.asScala.foreach { field =>
-//      val name = field.getFieldName
-//      field.getDataType match {
-//        case RecordFieldType.BOOLEAN.getDataType => builder.add(name, classOf[Boolean])
-//        case RecordFieldType.DATE.getDataType    => builder.add(name, classOf[Date])
-//        case RecordFieldType.DOUBLE.getDataType  => builder.add(name, classOf[java.lang.Double])
-//        case RecordFieldType.FLOAT.getDataType   => builder.add(name, classOf[java.lang.Float])
-//        case RecordFieldType.INT.getDataType     => builder.add(name, classOf[java.lang.Integer])
-//        case RecordFieldType.LONG.getDataType    => builder.add(name, classOf[java.lang.Long])
-//        case RecordFieldType.STRING.getDataType  => builder.add(name, classOf[java.lang.String])
-//        case unmatched: _ =>
-//          println(s"didn't know what to do with type $unmatched")
-////        case RecordFieldType.ARRAY.getArrayDataType =>
-////        case RecordFieldType.MAP.getMapDataType =>
-//      }
-//    }
-//
-//    builder.buildFeatureType()
-//  }
+  
+  private def dataTypeToClass(dataType: DataType): Class[_] = {
+    dataType.getFieldType match {
+      case RecordFieldType.BOOLEAN => classOf[Boolean]
+      case RecordFieldType.DATE    => classOf[Date]
+      case RecordFieldType.DOUBLE  => classOf[java.lang.Double]
+      case RecordFieldType.FLOAT   => classOf[java.lang.Float]
+      case RecordFieldType.INT     => classOf[java.lang.Integer]
+      case RecordFieldType.LONG    => classOf[java.lang.Long]
+      case RecordFieldType.STRING  => classOf[java.lang.String]
+      case _ =>
+        throw new Exception(s"Do not know how to map type $dataType to a SimpleFeatureType.")
+      //        case RecordFieldType.ARRAY.getArrayDataType =>
+      //        case RecordFieldType.MAP.getMapDataType =>
+    }
+  }
+
 
   private def getConverter(
       name: String,
