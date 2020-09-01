@@ -34,20 +34,7 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
 
   "GeoAvroRecordSetWriterFactory" should {
     "Write out GeoAvro from a simple Record producing Processor" in {
-      val runner: TestRunner = TestRunners.newTestRunner(classOf[ConvertRecord])
-
-      val csvReader: CSVReader = new CSVReader
-      runner.addControllerService("csv-reader", csvReader)
-      runner.setProperty(csvReader, CSVUtils.VALUE_SEPARATOR, "|")
-      runner.enableControllerService(csvReader)
-
-      val geoAvroWriter = new GeoAvroRecordSetWriterFactory()
-      runner.addControllerService("geo-avro-record-set-writer", geoAvroWriter)
-      runner.setProperty(geoAvroWriter, WKT_COLUMNS, "position")
-      runner.enableControllerService(geoAvroWriter)
-
-      runner.setProperty("record-reader", "csv-reader")
-      runner.setProperty("record-writer", "geo-avro-record-set-writer")
+      val runner: TestRunner = buildRunner("position")
 
       val content: String =
         "id|username|role|position\n" +
@@ -55,21 +42,48 @@ class GeoAvroRecordSetWriterFactoryTest extends Specification with LazyLogging {
           "456|Lewis|leader|POINT(-86.9023 4.567)\n" +
           "789|Basie|pianist|POINT(-73.9465 40.8116)\n"
 
-      runner.enqueue(content)
-      runner.run()
+      enqueueAndRun(runner, content)
 
-      runner.assertAllFlowFilesTransferred("success", 1)
-
-      val result = runner.getContentAsByteArray(runner.getFlowFilesForRelationship("success").get(0))
-
-      val bais = new ByteArrayInputStream(result)
-      val avroReader = new AvroDataFileReader(bais)
-      val featuresRead: Seq[SimpleFeature] = avroReader.toList
+      val featuresRead: Seq[SimpleFeature] = getFeatures(runner)
 
       featuresRead.foreach { println(_) }
       featuresRead.size mustEqual(3)
 
       ok
     }
+  }
+
+  private def enqueueAndRun(runner: TestRunner, content: String) = {
+    runner.enqueue(content)
+    runner.run()
+
+    runner.assertAllFlowFilesTransferred("success", 1)
+  }
+
+  private def getFeatures(runner: TestRunner) = {
+    val result = runner.getContentAsByteArray(runner.getFlowFilesForRelationship("success").get(0))
+
+    val bais = new ByteArrayInputStream(result)
+    val avroReader = new AvroDataFileReader(bais)
+    val featuresRead: Seq[SimpleFeature] = avroReader.toList
+    featuresRead
+  }
+
+  private def buildRunner(geomtryColumns: String) = {
+    val runner: TestRunner = TestRunners.newTestRunner(classOf[ConvertRecord])
+
+    val csvReader: CSVReader = new CSVReader
+    runner.addControllerService("csv-reader", csvReader)
+    runner.setProperty(csvReader, CSVUtils.VALUE_SEPARATOR, "|")
+    runner.enableControllerService(csvReader)
+
+    val geoAvroWriter = new GeoAvroRecordSetWriterFactory()
+    runner.addControllerService("geo-avro-record-set-writer", geoAvroWriter)
+    runner.setProperty(geoAvroWriter, WKT_COLUMNS, geomtryColumns)
+    runner.enableControllerService(geoAvroWriter)
+
+    runner.setProperty("record-reader", "csv-reader")
+    runner.setProperty("record-writer", "geo-avro-record-set-writer")
+    runner
   }
 }
